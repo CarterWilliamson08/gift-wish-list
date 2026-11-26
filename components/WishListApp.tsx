@@ -54,11 +54,6 @@ export default function WishListApp() {
         message?: string;
         error?: string;
       };
-      if (res.status === 401) {
-        throw new Error(
-          data.error || "Sign in required to search (publish as private).",
-        );
-      }
       if (res.status === 429) {
         throw new Error(data.error || "Rate limit reached — try again later.");
       }
