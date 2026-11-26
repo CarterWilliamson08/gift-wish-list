@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import {
   brightScrape,
   DATASETS,
@@ -7,11 +6,15 @@ import {
   rowsFromResponse,
 } from "@/lib/brightdata";
 import { sampleOffersFor } from "@/lib/sample-data";
+import { jsonPrivate, protectBrightDataRoute } from "@/lib/protect-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  const gate = await protectBrightDataRoute(request, "compare");
+  if (gate instanceof Response) return gate;
+
   let keyword = "";
   let amazonPrice: number | null = null;
   try {
@@ -27,18 +30,18 @@ export async function POST(request: Request) {
         ? body.price
         : null;
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return jsonPrivate({ error: "Invalid JSON body" }, { status: 400 });
   }
 
   if (!keyword || keyword.length > 160) {
-    return NextResponse.json(
+    return jsonPrivate(
       { error: "Provide a product title or keyword to compare." },
       { status: 400 },
     );
   }
 
   if (!getApiKey()) {
-    return NextResponse.json({
+    return jsonPrivate({
       offers: sampleOffersFor(keyword, amazonPrice),
       sample: true,
       message:
@@ -60,7 +63,7 @@ export async function POST(request: Request) {
     });
 
     const offers = mapShoppingRows(rowsFromResponse(data)).slice(0, 12);
-    return NextResponse.json({
+    return jsonPrivate({
       offers: offers.length ? offers : sampleOffersFor(keyword, amazonPrice),
       sample: offers.length === 0,
       message:
@@ -70,7 +73,7 @@ export async function POST(request: Request) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Compare failed";
-    return NextResponse.json({
+    return jsonPrivate({
       offers: sampleOffersFor(keyword, amazonPrice),
       sample: true,
       message: `Live compare unavailable (${message}). Showing sample data.`,

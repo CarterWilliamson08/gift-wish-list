@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import {
   brightScrape,
   DATASETS,
@@ -7,21 +6,25 @@ import {
   rowsFromResponse,
 } from "@/lib/brightdata";
 import { SAMPLE_SEARCH } from "@/lib/sample-data";
+import { jsonPrivate, protectBrightDataRoute } from "@/lib/protect-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  const gate = await protectBrightDataRoute(request, "search");
+  if (gate instanceof Response) return gate;
+
   let keyword = "";
   try {
     const body = (await request.json()) as { q?: string; keyword?: string };
     keyword = (body.q || body.keyword || "").trim();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return jsonPrivate({ error: "Invalid JSON body" }, { status: 400 });
   }
 
   if (!keyword || keyword.length > 120) {
-    return NextResponse.json(
+    return jsonPrivate(
       { error: "Provide a search query (max 120 characters)." },
       { status: 400 },
     );
@@ -32,7 +35,7 @@ export async function POST(request: Request) {
     const filtered = SAMPLE_SEARCH.filter((p) =>
       p.title.toLowerCase().includes(q.split(/\s+/)[0] || q),
     );
-    return NextResponse.json({
+    return jsonPrivate({
       results: filtered.length ? filtered : SAMPLE_SEARCH,
       sample: true,
       message: "Sample data — add BRIGHTDATA_API_KEY for live Amazon search.",
@@ -55,19 +58,16 @@ export async function POST(request: Request) {
       .filter((r): r is NonNullable<typeof r> => !!r)
       .slice(0, 12);
 
-    return NextResponse.json({
+    return jsonPrivate({
       results,
       sample: false,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Search failed";
-    return NextResponse.json(
-      {
-        results: SAMPLE_SEARCH,
-        sample: true,
-        message: `Live search unavailable (${message}). Showing sample data.`,
-      },
-      { status: 200 },
-    );
+    return jsonPrivate({
+      results: SAMPLE_SEARCH,
+      sample: true,
+      message: `Live search unavailable (${message}). Showing sample data.`,
+    });
   }
 }

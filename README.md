@@ -49,9 +49,14 @@ Never hardcode the key. Never put it in `NEXT_PUBLIC_*` or commit it.
 
 The API key is read only on the server (`process.env.BRIGHTDATA_API_KEY`).
 
+## Auth & rate limits
+
+Publish as **private** (recommended) so only signed-in Cursor viewers reach the app. The `/api/search`, `/api/product`, and `/api/compare` routes require Cursor app identity and apply a household rate limit (8 requests/minute and 40/day per viewer per route) before spending Bright Data quota.
+
 ## Features
 
 - Amazon-first search with Add to list
 - Retailer compare + switch saved link
 - Copy plain-text message for family
 - Sample mode banner when the secret is absent
+- Signed-in callers only + per-visitor rate limits on paid scrape routes

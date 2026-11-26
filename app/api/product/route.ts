@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import {
   brightScrape,
   DATASETS,
@@ -8,22 +7,26 @@ import {
   rowsFromResponse,
 } from "@/lib/brightdata";
 import { SAMPLE_SEARCH } from "@/lib/sample-data";
+import { jsonPrivate, protectBrightDataRoute } from "@/lib/protect-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  const gate = await protectBrightDataRoute(request, "product");
+  if (gate instanceof Response) return gate;
+
   let raw = "";
   try {
     const body = (await request.json()) as { url?: string; asin?: string };
     raw = (body.url || body.asin || "").trim();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return jsonPrivate({ error: "Invalid JSON body" }, { status: 400 });
   }
 
   const amazonUrl = normalizeAmazonUrl(raw);
   if (!amazonUrl) {
-    return NextResponse.json(
+    return jsonPrivate(
       { error: "Provide a valid Amazon product URL or ASIN." },
       { status: 400 },
     );
@@ -33,7 +36,7 @@ export async function POST(request: Request) {
     const asin = amazonUrl.match(/\/dp\/([A-Z0-9]{10})/i)?.[1];
     const hit =
       SAMPLE_SEARCH.find((p) => p.asin === asin) || SAMPLE_SEARCH[0];
-    return NextResponse.json({
+    return jsonPrivate({
       product: { ...hit, url: amazonUrl },
       sample: true,
       message: "Sample data — add BRIGHTDATA_API_KEY for live product lookup.",
@@ -50,15 +53,15 @@ export async function POST(request: Request) {
       .find(Boolean);
 
     if (!product) {
-      return NextResponse.json(
+      return jsonPrivate(
         { error: "No product data returned." },
         { status: 404 },
       );
     }
 
-    return NextResponse.json({ product, sample: false });
+    return jsonPrivate({ product, sample: false });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Product lookup failed";
-    return NextResponse.json({ error: message }, { status: 502 });
+    return jsonPrivate({ error: message }, { status: 502 });
   }
 }

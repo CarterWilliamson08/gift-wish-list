@@ -54,6 +54,14 @@ export default function WishListApp() {
         message?: string;
         error?: string;
       };
+      if (res.status === 401) {
+        throw new Error(
+          data.error || "Sign in required to search (publish as private).",
+        );
+      }
+      if (res.status === 429) {
+        throw new Error(data.error || "Rate limit reached — try again later.");
+      }
       if (!res.ok) throw new Error(data.error || "Search failed");
       setResults(data.results || []);
       if (data.sample || data.message) {
@@ -107,7 +115,12 @@ export default function WishListApp() {
         offers?: RetailerOffer[];
         sample?: boolean;
         message?: string;
+        error?: string;
       };
+      if (res.status === 401 || res.status === 429) {
+        setBanner({ text: data.error || "Could not compare prices." });
+        return;
+      }
       if (data.sample && data.message) {
         setBanner({ text: data.message, sample: true });
       }
