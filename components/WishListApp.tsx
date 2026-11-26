@@ -11,6 +11,17 @@ import {
 
 type Banner = { text: string; sample?: boolean } | null;
 
+function safeHref(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    const u = new URL(url);
+    if (u.protocol === "http:" || u.protocol === "https:") return u.toString();
+  } catch {
+    /* ignore */
+  }
+  return undefined;
+}
+
 export default function WishListApp() {
   const [ready, setReady] = useState(false);
   const [started, setStarted] = useState(false);
@@ -78,8 +89,10 @@ export default function WishListApp() {
   }
 
   function addToList(hit: ProductHit) {
+    const url = safeHref(hit.url);
+    if (!url) return;
     setItems((prev) => {
-      if (prev.some((p) => p.url === hit.url || (hit.asin && p.asin === hit.asin))) {
+      if (prev.some((p) => p.url === url || (hit.asin && p.asin === hit.asin))) {
         return prev;
       }
       const next: WishItem = {
@@ -87,8 +100,8 @@ export default function WishListApp() {
         title: hit.title,
         price: hit.price,
         currency: hit.currency,
-        url: hit.url,
-        image: hit.image,
+        url,
+        image: safeHref(hit.image) ?? null,
         asin: hit.asin,
         addedAt: new Date().toISOString(),
       };
@@ -132,12 +145,14 @@ export default function WishListApp() {
   }
 
   function switchLink(itemId: string, offer: RetailerOffer) {
+    const url = safeHref(offer.url);
+    if (!url) return;
     setItems((prev) =>
       prev.map((item) =>
         item.id === itemId
           ? {
               ...item,
-              url: offer.url,
+              url,
               price: offer.price ?? item.price,
               currency: offer.currency || item.currency,
             }
@@ -247,11 +262,14 @@ export default function WishListApp() {
             <p className="muted">Search above to see Amazon matches.</p>
           )}
           <ul className="hit-list">
-            {results.map((hit) => (
+            {results.map((hit) => {
+              const href = safeHref(hit.url);
+              const img = safeHref(hit.image);
+              return (
               <li key={hit.id} className="hit">
-                {hit.image ? (
+                {img ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={hit.image} alt="" width={56} height={56} />
+                  <img src={img} alt="" width={56} height={56} />
                 ) : (
                   <div className="img-fallback" />
                 )}
@@ -263,16 +281,19 @@ export default function WishListApp() {
                     <span>{hit.retailer}</span>
                   </p>
                   <div className="hit-actions">
-                    <a href={hit.url} target="_blank" rel="noopener noreferrer">
-                      Open
-                    </a>
+                    {href ? (
+                      <a href={href} target="_blank" rel="noopener noreferrer">
+                        Open
+                      </a>
+                    ) : null}
                     <button type="button" className="btn-pill" onClick={() => addToList(hit)}>
                       Add to list
                     </button>
                   </div>
                 </div>
               </li>
-            ))}
+            );
+            })}
           </ul>
         </section>
 
@@ -336,9 +357,15 @@ export default function WishListApp() {
                         </ul>
                       )}
                       <div className="wish-actions">
-                        <a href={item.url} target="_blank" rel="noopener noreferrer">
-                          Open saved link
-                        </a>
+                        {safeHref(item.url) ? (
+                          <a
+                            href={safeHref(item.url)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            Open saved link
+                          </a>
+                        ) : null}
                         <button
                           type="button"
                           className="linkish"

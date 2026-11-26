@@ -28,19 +28,31 @@ function asString(value: unknown): string | null {
   return null;
 }
 
+/** Only allow http(s) absolute URLs — drop javascript:/data:/etc. */
+export function safeHttpUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const u = new URL(value.trim());
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
 function pickImage(row: Record<string, unknown>): string | null {
-  return (
+  return safeHttpUrl(
     asString(row.image) ||
-    asString(row.image_url) ||
-    asString(row.main_image) ||
-    (Array.isArray(row.images) ? asString(row.images[0]) : null)
+      asString(row.image_url) ||
+      asString(row.main_image) ||
+      (Array.isArray(row.images) ? asString(row.images[0]) : null),
   );
 }
 
 export function mapAmazonSearchRow(row: Record<string, unknown>): ProductHit | null {
   const title =
     asString(row.name) || asString(row.title) || asString(row.product_name);
-  const url = asString(row.url);
+  const url = safeHttpUrl(asString(row.url));
   if (!title || !url) return null;
   const asin = asString(row.asin);
   const price =
@@ -59,7 +71,7 @@ export function mapAmazonSearchRow(row: Record<string, unknown>): ProductHit | n
 
 export function mapAmazonProductRow(row: Record<string, unknown>): ProductHit | null {
   const title = asString(row.title) || asString(row.name);
-  const url = asString(row.url) || asString(row.input_url);
+  const url = safeHttpUrl(asString(row.url) || asString(row.input_url));
   if (!title || !url) return null;
   const asin = asString(row.asin);
   const price =
@@ -99,7 +111,7 @@ export function mapShoppingRows(rows: Record<string, unknown>[]): RetailerOffer[
       for (const opt of buying) {
         if (!opt || typeof opt !== "object") continue;
         const o = opt as Record<string, unknown>;
-        const url = asString(o.url) || asString(o.link);
+        const url = safeHttpUrl(asString(o.url) || asString(o.link));
         if (!url) continue;
         offers.push({
           retailer:
@@ -113,7 +125,7 @@ export function mapShoppingRows(rows: Record<string, unknown>[]): RetailerOffer[
       }
     }
 
-    const url = asString(row.url) || asString(row.link);
+    const url = safeHttpUrl(asString(row.url) || asString(row.link));
     if (url) {
       offers.push({
         retailer:

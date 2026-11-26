@@ -51,7 +51,7 @@ The API key is read only on the server (`process.env.BRIGHTDATA_API_KEY`).
 
 ## Rate limits (public app)
 
-This app is published **public** — anonymous visitors can search. `/api/search`, `/api/product`, and `/api/compare` apply a household rate limit (8 requests/minute and 40/day per IP, or per Cursor identity when present) before spending Bright Data quota. There is no hard sign-in gate.
+This app is published **public** — anonymous visitors can search. `/api/search`, `/api/product`, and `/api/compare` apply household rate limits (8 requests/minute and 40/day per visitor cookie or Cursor identity, plus a process-wide 24/min and 120/day cap) before spending Bright Data quota. Visitor keys are never taken from client-supplied IP headers. Scraped links are restricted to `http`/`https`. There is no hard sign-in gate.
 
 ## Features
 
@@ -59,4 +59,4 @@ This app is published **public** — anonymous visitors can search. `/api/search
 - Retailer compare + switch saved link
 - Copy plain-text message for family
 - Sample mode banner when the secret is absent
-- Per-IP (or soft identity) rate limits on paid scrape routes
+- Per-visitor cookie (or soft identity) + global rate limits on paid scrape routes

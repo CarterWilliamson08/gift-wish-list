@@ -14,6 +14,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const gate = await protectBrightDataRoute(request, "compare");
   if (gate instanceof Response) return gate;
+  const headers = gate.extraHeaders;
 
   let keyword = "";
   let amazonPrice: number | null = null;
@@ -30,23 +31,26 @@ export async function POST(request: Request) {
         ? body.price
         : null;
   } catch {
-    return jsonPrivate({ error: "Invalid JSON body" }, { status: 400 });
+    return jsonPrivate({ error: "Invalid JSON body" }, { status: 400, headers });
   }
 
   if (!keyword || keyword.length > 160) {
     return jsonPrivate(
       { error: "Provide a product title or keyword to compare." },
-      { status: 400 },
+      { status: 400, headers },
     );
   }
 
   if (!getApiKey()) {
-    return jsonPrivate({
-      offers: sampleOffersFor(keyword, amazonPrice),
-      sample: true,
-      message:
-        "Sample retailer compare — add BRIGHTDATA_API_KEY for live Google Shopping.",
-    });
+    return jsonPrivate(
+      {
+        offers: sampleOffersFor(keyword, amazonPrice),
+        sample: true,
+        message:
+          "Sample retailer compare — add BRIGHTDATA_API_KEY for live Google Shopping.",
+      },
+      { headers },
+    );
   }
 
   try {
@@ -63,20 +67,26 @@ export async function POST(request: Request) {
     });
 
     const offers = mapShoppingRows(rowsFromResponse(data)).slice(0, 12);
-    return jsonPrivate({
-      offers: offers.length ? offers : sampleOffersFor(keyword, amazonPrice),
-      sample: offers.length === 0,
-      message:
-        offers.length === 0
-          ? "No live offers returned — showing sample compare."
-          : undefined,
-    });
+    return jsonPrivate(
+      {
+        offers: offers.length ? offers : sampleOffersFor(keyword, amazonPrice),
+        sample: offers.length === 0,
+        message:
+          offers.length === 0
+            ? "No live offers returned — showing sample compare."
+            : undefined,
+      },
+      { headers },
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Compare failed";
-    return jsonPrivate({
-      offers: sampleOffersFor(keyword, amazonPrice),
-      sample: true,
-      message: `Live compare unavailable (${message}). Showing sample data.`,
-    });
+    return jsonPrivate(
+      {
+        offers: sampleOffersFor(keyword, amazonPrice),
+        sample: true,
+        message: `Live compare unavailable (${message}). Showing sample data.`,
+      },
+      { headers },
+    );
   }
 }

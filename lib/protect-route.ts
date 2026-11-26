@@ -3,33 +3,62 @@ import { getIdentity } from "../cursor/identity";
 import { checkRateLimit } from "./rate-limit";
 
 const NO_STORE = { "Cache-Control": "private, no-store" } as const;
+const VISITOR_COOKIE = "wl_vid";
+const VISITOR_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
-function clientIp(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) return first;
+export type ProtectOk = {
+  visitorId: string;
+  /** Extra response headers (e.g. Set-Cookie for a new visitor id). */
+  extraHeaders: Record<string, string>;
+};
+
+function readVisitorCookie(request: Request): string | null {
+  const raw = request.headers.get("cookie");
+  if (!raw) return null;
+  for (const part of raw.split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name === VISITOR_COOKIE) {
+      const value = rest.join("=").trim();
+      if (/^[a-zA-Z0-9_-]{16,64}$/.test(value)) return value;
+    }
   }
-  const realIp = request.headers.get("x-real-ip")?.trim();
-  if (realIp) return realIp;
-  const cf = request.headers.get("cf-connecting-ip")?.trim();
-  if (cf) return cf;
-  return "unknown";
+  return null;
+}
+
+function mintVisitorId(): string {
+  return crypto.randomUUID().replace(/-/g, "");
+}
+
+function visitorSetCookie(id: string, request: Request): string {
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  return `${VISITOR_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${VISITOR_COOKIE_MAX_AGE}${secure}`;
 }
 
 /**
- * Soft Cursor identity when present (private/team), otherwise per-IP visitor
- * key. Never blocks anonymous callers with "sign in required" — public apps
- * have no sign-in UI. Always enforce Bright Data rate limits.
+ * Soft Cursor identity when present; otherwise a server-minted HttpOnly
+ * visitor cookie (never client-supplied IP / X-Forwarded-For). Always
+ * enforce per-visitor + global Bright Data rate limits.
  */
 export async function protectBrightDataRoute(
   request: Request,
   routeName: "search" | "product" | "compare",
-): Promise<Response | { visitorId: string }> {
+): Promise<Response | ProtectOk> {
   const identity = await getIdentity(request);
-  const visitorId = identity.verified
-    ? `id:${identity.sub}`
-    : `ip:${clientIp(request)}`;
+  const extraHeaders: Record<string, string> = {};
+
+  let visitorId: string;
+  if (identity.verified) {
+    visitorId = `id:${identity.sub}`;
+  } else {
+    const existing = readVisitorCookie(request);
+    if (existing) {
+      visitorId = `ck:${existing}`;
+    } else {
+      const minted = mintVisitorId();
+      visitorId = `ck:${minted}`;
+      extraHeaders["Set-Cookie"] = visitorSetCookie(minted, request);
+    }
+  }
 
   const limited = checkRateLimit(`${routeName}:${visitorId}`);
   if (!limited.ok) {
@@ -44,17 +73,21 @@ export async function protectBrightDataRoute(
         headers: {
           ...NO_STORE,
           "Retry-After": String(limited.retryAfterSec),
+          ...extraHeaders,
         },
       },
     );
   }
 
-  return { visitorId };
+  return { visitorId, extraHeaders };
 }
 
-export function jsonPrivate(data: unknown, init?: { status?: number }) {
+export function jsonPrivate(
+  data: unknown,
+  init?: { status?: number; headers?: Record<string, string> },
+) {
   return NextResponse.json(data, {
     status: init?.status ?? 200,
-    headers: NO_STORE,
+    headers: { ...NO_STORE, ...init?.headers },
   });
 }

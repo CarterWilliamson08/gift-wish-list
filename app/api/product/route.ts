@@ -15,20 +15,21 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const gate = await protectBrightDataRoute(request, "product");
   if (gate instanceof Response) return gate;
+  const headers = gate.extraHeaders;
 
   let raw = "";
   try {
     const body = (await request.json()) as { url?: string; asin?: string };
     raw = (body.url || body.asin || "").trim();
   } catch {
-    return jsonPrivate({ error: "Invalid JSON body" }, { status: 400 });
+    return jsonPrivate({ error: "Invalid JSON body" }, { status: 400, headers });
   }
 
   const amazonUrl = normalizeAmazonUrl(raw);
   if (!amazonUrl) {
     return jsonPrivate(
       { error: "Provide a valid Amazon product URL or ASIN." },
-      { status: 400 },
+      { status: 400, headers },
     );
   }
 
@@ -36,11 +37,14 @@ export async function POST(request: Request) {
     const asin = amazonUrl.match(/\/dp\/([A-Z0-9]{10})/i)?.[1];
     const hit =
       SAMPLE_SEARCH.find((p) => p.asin === asin) || SAMPLE_SEARCH[0];
-    return jsonPrivate({
-      product: { ...hit, url: amazonUrl },
-      sample: true,
-      message: "Sample data — add BRIGHTDATA_API_KEY for live product lookup.",
-    });
+    return jsonPrivate(
+      {
+        product: { ...hit, url: amazonUrl },
+        sample: true,
+        message: "Sample data — add BRIGHTDATA_API_KEY for live product lookup.",
+      },
+      { headers },
+    );
   }
 
   try {
@@ -55,13 +59,13 @@ export async function POST(request: Request) {
     if (!product) {
       return jsonPrivate(
         { error: "No product data returned." },
-        { status: 404 },
+        { status: 404, headers },
       );
     }
 
-    return jsonPrivate({ product, sample: false });
+    return jsonPrivate({ product, sample: false }, { headers });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Product lookup failed";
-    return jsonPrivate({ error: message }, { status: 502 });
+    return jsonPrivate({ error: message }, { status: 502, headers });
   }
 }
