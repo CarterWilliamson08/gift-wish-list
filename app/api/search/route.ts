@@ -1,6 +1,7 @@
 import {
   brightScrape,
   DATASETS,
+  enrichMissingAmazonPrices,
   getApiKey,
   mapAmazonSearchRow,
   rowsFromResponse,
@@ -57,10 +58,13 @@ export async function POST(request: Request) {
         },
       ],
     });
-    const results = rowsFromResponse(data)
+    const mapped = rowsFromResponse(data)
       .map(mapAmazonSearchRow)
       .filter((r): r is NonNullable<typeof r> => !!r)
       .slice(0, 12);
+
+    // Search often returns final_price=0 for consoles; enrich top misses via product dataset.
+    const results = await enrichMissingAmazonPrices(mapped, { limit: 5 });
 
     return jsonPrivate({ results, sample: false }, { headers });
   } catch (err) {

@@ -20,7 +20,10 @@ export function saveWishlist(items: WishItem[]) {
 }
 
 export function formatMoney(price: number | null, currency = "USD"): string {
-  if (price == null) return "—";
+  // Never render $0.00 for missing prices — callers must pass null when unknown.
+  if (price == null || !Number.isFinite(price) || price <= 0) {
+    return "Price unavailable";
+  }
   try {
     return new Intl.NumberFormat("en-US", {
       style: "currency",

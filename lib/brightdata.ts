@@ -17,10 +17,41 @@ function asNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
     const cleaned = value.replace(/[^0-9.]/g, "");
+    // Empty / non-numeric strings (e.g. "See price in cart") must stay null — never coerce to 0.
+    if (!cleaned) return null;
     const n = Number.parseFloat(cleaned);
     return Number.isFinite(n) ? n : null;
   }
   return null;
+}
+
+/**
+ * Amazon search often returns final_price/initial_price = 0 when the listing has no
+ * buy-box / cart price. Treat non-positive values as unknown rather than $0.00.
+ */
+function asPositivePrice(value: unknown): number | null {
+  const n = asNumber(value);
+  if (n == null || n <= 0) return null;
+  return n;
+}
+
+/** Prefer live buy-box / final price fields; skip sentinel zeros. */
+export function pickAmazonPrice(row: Record<string, unknown>): number | null {
+  const buybox = row.buybox_prices;
+  const buyboxFinal =
+    buybox && typeof buybox === "object"
+      ? asPositivePrice((buybox as Record<string, unknown>).final_price) ??
+        asPositivePrice((buybox as Record<string, unknown>).price)
+      : null;
+
+  return (
+    asPositivePrice(row.final_price) ??
+    buyboxFinal ??
+    asPositivePrice(row.current_price) ??
+    asPositivePrice(row.price) ??
+    asPositivePrice(row.list_price) ??
+    asPositivePrice(row.initial_price)
+  );
 }
 
 function asString(value: unknown): string | null {
@@ -55,12 +86,10 @@ export function mapAmazonSearchRow(row: Record<string, unknown>): ProductHit | n
   const url = safeHttpUrl(asString(row.url));
   if (!title || !url) return null;
   const asin = asString(row.asin);
-  const price =
-    asNumber(row.final_price) ?? asNumber(row.price) ?? asNumber(row.initial_price);
   return {
     id: asin || url,
     title,
-    price,
+    price: pickAmazonPrice(row),
     currency: asString(row.currency) || "USD",
     url,
     image: pickImage(row),
@@ -74,12 +103,10 @@ export function mapAmazonProductRow(row: Record<string, unknown>): ProductHit | 
   const url = safeHttpUrl(asString(row.url) || asString(row.input_url));
   if (!title || !url) return null;
   const asin = asString(row.asin);
-  const price =
-    asNumber(row.final_price) ?? asNumber(row.price) ?? asNumber(row.initial_price);
   return {
     id: asin || url,
     title,
-    price,
+    price: pickAmazonPrice(row),
     currency: asString(row.currency) || "USD",
     url,
     image: pickImage(row),
@@ -118,7 +145,10 @@ export function mapShoppingRows(rows: Record<string, unknown>[]): RetailerOffer[
             asString(o.seller_name) ||
             asString(o.merchant) ||
             retailerFromUrl(url),
-          price: asNumber(o.price) ?? asNumber(o.total_price) ?? asNumber(o.item_price),
+          price:
+            asPositivePrice(o.price) ??
+            asPositivePrice(o.total_price) ??
+            asPositivePrice(o.item_price),
           currency: asString(o.currency) || asString(row.currency) || "USD",
           url,
         });
@@ -134,10 +164,10 @@ export function mapShoppingRows(rows: Record<string, unknown>[]): RetailerOffer[
           asString(row.store) ||
           retailerFromUrl(url),
         price:
-          asNumber(row.price) ??
-          asNumber(row.item_price) ??
-          asNumber(row.total_price) ??
-          asNumber(row.final_price),
+          asPositivePrice(row.price) ??
+          asPositivePrice(row.item_price) ??
+          asPositivePrice(row.total_price) ??
+          asPositivePrice(row.final_price),
         currency: asString(row.currency) || "USD",
         url,
       });
@@ -267,4 +297,70 @@ export function normalizeAmazonUrl(urlOrAsin: string): string | null {
     }
   }
   return null;
+}
+
+/**
+ * When Amazon search rows lack a real price (sentinel 0 / missing), enrich the
+ * first few via the product dataset in one batched scrape. Failures are ignored
+ * so search still returns titles/links.
+ */
+export async function enrichMissingAmazonPrices(
+  hits: ProductHit[],
+  options: { limit?: number } = {},
+): Promise<ProductHit[]> {
+  const limit = Math.max(0, Math.min(options.limit ?? 5, 8));
+  if (!limit || !getApiKey()) return hits;
+
+  const needEnrich = hits
+    .map((hit, index) => ({ hit, index }))
+    .filter(({ hit }) => hit.price == null)
+    .slice(0, limit);
+
+  if (!needEnrich.length) return hits;
+
+  const body = needEnrich
+    .map(({ hit }) => {
+      const url = normalizeAmazonUrl(hit.asin || hit.url);
+      return url ? { url } : null;
+    })
+    .filter((row): row is { url: string } => !!row);
+
+  if (!body.length) return hits;
+
+  try {
+    const data = await brightScrape({
+      datasetId: DATASETS.amazonProduct,
+      body,
+    });
+    const byAsin = new Map<string, ProductHit>();
+    const byUrl = new Map<string, ProductHit>();
+    for (const row of rowsFromResponse(data)) {
+      const product = mapAmazonProductRow(row);
+      if (!product || product.price == null) continue;
+      if (product.asin) byAsin.set(product.asin.toUpperCase(), product);
+      byUrl.set(product.url.replace(/[?#].*$/, ""), product);
+      const normalized = normalizeAmazonUrl(product.asin || product.url);
+      if (normalized) byUrl.set(normalized, product);
+    }
+
+    return hits.map((hit) => {
+      if (hit.price != null) return hit;
+      const fromAsin = hit.asin ? byAsin.get(hit.asin.toUpperCase()) : undefined;
+      const fromUrl =
+        byUrl.get(hit.url.replace(/[?#].*$/, "")) ||
+        (normalizeAmazonUrl(hit.asin || hit.url)
+          ? byUrl.get(normalizeAmazonUrl(hit.asin || hit.url)!)
+          : undefined);
+      const enriched = fromAsin || fromUrl;
+      if (!enriched || enriched.price == null) return hit;
+      return {
+        ...hit,
+        price: enriched.price,
+        currency: enriched.currency || hit.currency,
+        image: hit.image || enriched.image,
+      };
+    });
+  } catch {
+    return hits;
+  }
 }
