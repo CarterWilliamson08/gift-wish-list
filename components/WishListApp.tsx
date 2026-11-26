@@ -53,20 +53,43 @@ export default function WishListApp() {
     setStarted(true);
     setSearching(true);
     setBanner(null);
+    const ctrl = new AbortController();
+    // Client must abort before an infinite "Searching…" — server budget is ~22s;
+    // leave headroom for network, but never hang past 45s.
+    const CLIENT_TIMEOUT_MS = 45_000;
+    const timer = setTimeout(() => ctrl.abort(), CLIENT_TIMEOUT_MS);
     try {
       const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ q }),
+        signal: ctrl.signal,
       });
-      const data = (await res.json()) as {
+      const raw = await res.text();
+      let data: {
         results?: ProductHit[];
         sample?: boolean;
         message?: string;
         error?: string;
-      };
+        code?: string;
+      } = {};
+      try {
+        data = raw ? (JSON.parse(raw) as typeof data) : {};
+      } catch {
+        if (res.status >= 500) {
+          throw new Error(
+            "Search timed out on the server. Try again in a moment.",
+          );
+        }
+        throw new Error("Search failed — unexpected response from server.");
+      }
       if (res.status === 429) {
         throw new Error(data.error || "Rate limit reached — try again later.");
+      }
+      if (res.status === 504 || data.code === "timeout") {
+        throw new Error(
+          data.error || "Search timed out. Try again in a moment.",
+        );
       }
       if (!res.ok) throw new Error(data.error || "Search failed");
       setResults(data.results || []);
@@ -79,11 +102,19 @@ export default function WishListApp() {
         setBanner(null);
       }
     } catch (err) {
+      const aborted =
+        (err instanceof DOMException && err.name === "AbortError") ||
+        (err instanceof Error && err.name === "AbortError");
       setBanner({
-        text: err instanceof Error ? err.message : "Search failed",
+        text: aborted
+          ? "Search timed out. Try again — Amazon lookups can be slow."
+          : err instanceof Error
+            ? err.message
+            : "Search failed",
       });
       setResults([]);
     } finally {
+      clearTimeout(timer);
       setSearching(false);
     }
   }
@@ -257,9 +288,12 @@ export default function WishListApp() {
 
         <section className="block">
           <h3>Amazon matches</h3>
-          {searching && <p className="muted">Searching…</p>}
-          {!searching && results.length === 0 && (
+          {searching && <p className="muted">Searching… (cancels after 45s)</p>}
+          {!searching && results.length === 0 && !banner && (
             <p className="muted">Search above to see Amazon matches.</p>
+          )}
+          {!searching && results.length === 0 && banner && !banner.sample && (
+            <p className="muted">No results — fix the error above and try again.</p>
           )}
           <ul className="hit-list">
             {results.map((hit) => {
